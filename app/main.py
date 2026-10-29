@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import Base, engine
 from app.config import settings
-from app.routers import auth, videos, words, review, story, chat, tts, translate, grammar, books
+from app.routers import auth, videos, words, review, story, chat, tts, translate, grammar, books, pronounce
 
 Base.metadata.create_all(bind=engine)
 
@@ -28,6 +28,7 @@ app.include_router(tts.router)
 app.include_router(translate.router)
 app.include_router(grammar.router)
 app.include_router(books.router)
+app.include_router(pronounce.router)
 
 
 @app.get("/health")

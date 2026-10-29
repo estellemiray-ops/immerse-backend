@@ -134,5 +134,6 @@ feels off, two alternatives (set `GROQ_MODEL` as a Render env var):
 | `POST /grammar/check` | `{text}` in Mandarin → corrected + explanation |
 | `GET /books/recommendations` | once you've saved 30+ words, suggests real books |
 | `GET /tts?text=...` | streams mp3 audio of the pronunciation |
+| `POST /pronounce/check` | multipart audio + `expected_zh` → what was heard, whether it matched |
 
 Next up: the React Native (Expo) app that talks to this API.
