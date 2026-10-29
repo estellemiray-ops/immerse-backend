@@ -1,0 +1,135 @@
+from typing import List, Optional
+from pydantic import BaseModel, EmailStr
+
+
+class RegisterIn(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class LoginIn(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class TokenOut(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+class ProcessVideoIn(BaseModel):
+    youtube_url: str
+
+
+class ChunkOut(BaseModel):
+    zh: str
+    pinyin: str = ""
+    en: str = ""
+
+    class Config:
+        from_attributes = True
+
+
+class LineOut(BaseModel):
+    chunks: List[ChunkOut]
+
+    class Config:
+        from_attributes = True
+
+
+class VideoOut(BaseModel):
+    id: int
+    youtube_id: str
+    title: str
+    source: str
+    lines: List[LineOut]
+
+    class Config:
+        from_attributes = True
+
+
+class MarkLearntIn(BaseModel):
+    zh: str
+    pinyin: str = ""
+    en: str = ""
+
+
+class SaveWordIn(BaseModel):
+    zh: str
+    pinyin: str
+    meaning: str
+    examples: List[dict] = []
+
+
+class LibraryWordOut(BaseModel):
+    zh: str
+    pinyin: str
+    meaning: str
+    status: str
+    examples: list = []
+    added_at: int
+
+    class Config:
+        from_attributes = True
+
+
+class LessonOut(BaseModel):
+    zh: str
+    pinyin: str
+    meaning: str
+    examples: List[dict]
+
+
+class ReviewItem(BaseModel):
+    word: str
+    card_type: str
+    entry: LibraryWordOut
+
+
+class GradeIn(BaseModel):
+    zh: str
+    card_type: str
+    grade: str  # again | hard | good | easy
+
+
+class StoryOut(BaseModel):
+    title: str
+    lines: List[dict]
+
+
+class ChatIn(BaseModel):
+    channel: str  # partner | tutor
+    message: str
+
+
+class ChatOut(BaseModel):
+    reply: str
+
+
+class TranslateIn(BaseModel):
+    text: str  # what the learner typed in English
+
+
+class TranslateOut(BaseModel):
+    translation_chunks: List[ChunkOut]  # tappable, same shape as subtitle chunks
+
+
+class GrammarCheckIn(BaseModel):
+    text: str  # a sentence the learner wrote in Mandarin
+
+
+class GrammarCheckOut(BaseModel):
+    is_correct: bool
+    corrected: str
+    explanation: str
+
+
+class BookRecommendation(BaseModel):
+    title: str
+    author: str
+    why: str
+
+
+class BookRecommendationsOut(BaseModel):
+    level_summary: str
+    books: List[BookRecommendation]
