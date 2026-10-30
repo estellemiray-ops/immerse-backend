@@ -1,5 +1,5 @@
 import time
-from sqlalchemy import Column, Integer, String, Float, Text, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, Integer, BigInteger, String, Float, Text, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -13,7 +13,7 @@ class User(Base):
     id = Column(Integer, primary_key=True)
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
-    created_at = Column(Integer, default=now_ms)
+    created_at = Column(BigInteger, default=now_ms)
 
 
 class Video(Base):
@@ -23,7 +23,7 @@ class Video(Base):
     youtube_id = Column(String, nullable=False)
     title = Column(String, default="")
     source = Column(String, default="captions")  # captions | whisper
-    created_at = Column(Integer, default=now_ms)
+    created_at = Column(BigInteger, default=now_ms)
 
     lines = relationship("Line", back_populates="video", cascade="all, delete-orphan", order_by="Line.order_index")
 
@@ -33,7 +33,7 @@ class Line(Base):
     id = Column(Integer, primary_key=True)
     video_id = Column(Integer, ForeignKey("videos.id"), nullable=False)
     order_index = Column(Integer, nullable=False)
-    start_ms = Column(Integer, default=0)
+    start_ms = Column(BigInteger, default=0)
 
     video = relationship("Video", back_populates="lines")
     chunks = relationship("Chunk", back_populates="line", cascade="all, delete-orphan", order_by="Chunk.order_index")
@@ -61,7 +61,7 @@ class LibraryWord(Base):
     meaning = Column(String, default="")
     examples_json = Column(Text, default="[]")
     status = Column(String, default="learnt")  # learnt | saved
-    added_at = Column(Integer, default=now_ms)
+    added_at = Column(BigInteger, default=now_ms)
 
     cards = relationship("CardState", back_populates="word", cascade="all, delete-orphan")
 
@@ -78,7 +78,7 @@ class CardState(Base):
     ease = Column(Float, default=2.5)
     interval_days = Column(Float, default=0)
     reps = Column(Integer, default=0)
-    due_at = Column(Integer, default=now_ms)
+    due_at = Column(BigInteger, default=now_ms)
 
     word = relationship("LibraryWord", back_populates="cards")
 
@@ -90,4 +90,4 @@ class ChatMessage(Base):
     channel = Column(String, nullable=False)  # partner | tutor
     role = Column(String, nullable=False)  # user | assistant
     text = Column(Text, nullable=False)
-    created_at = Column(Integer, default=now_ms)
+    created_at = Column(BigInteger, default=now_ms)
