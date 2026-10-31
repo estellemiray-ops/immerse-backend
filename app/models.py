@@ -1,5 +1,5 @@
 import time
-from sqlalchemy import Column, Integer, BigInteger, String, Float, Text, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, Integer, BigInteger, Boolean, String, Float, Text, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -24,6 +24,11 @@ class Video(Base):
     title = Column(String, default="")
     source = Column(String, default="captions")  # captions | whisper
     created_at = Column(BigInteger, default=now_ms)
+    # complete: every line has been aligned/translated. transcript: the FULL raw
+    # Mandarin lines as a JSON list, saved up front so other features never depend
+    # on how far the reader has got.
+    complete = Column(Boolean, default=False)
+    transcript = Column(Text, default="")
 
     lines = relationship("Line", back_populates="video", cascade="all, delete-orphan", order_by="Line.order_index")
 

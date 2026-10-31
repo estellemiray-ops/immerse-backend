@@ -1,20 +1,45 @@
 import json
 import re
-from groq import Groq
+import time
+from contextvars import ContextVar
+from groq import Groq, RateLimitError
 from app.config import settings
 
 _client = None
+# The Groq key the person typed into the app, for the request being handled.
+# Set per request by a middleware in main.py; falls back to the server's own key.
+user_key: ContextVar[str] = ContextVar("user_key", default="")
+
+
+class NoKeyError(Exception):
+    pass
 
 
 def client() -> Groq:
     global _client
+    key = user_key.get()
+    if key:
+        return Groq(api_key=key)
+    if not settings.groq_api_key:
+        raise NoKeyError("Add your free Groq key in Tools → AI key to use this.")
     if _client is None:
         _client = Groq(api_key=settings.groq_api_key)
     return _client
 
 
+def _create_with_retry(**kwargs):
+    """Groq's free tier answers 429 when asked too fast; wait and try again."""
+    for attempt in range(4):
+        try:
+            return client().chat.completions.create(**kwargs)
+        except RateLimitError:
+            if attempt == 3:
+                raise
+            time.sleep(min(8 * (attempt + 1), 25))
+
+
 def call(system: str, user: str, max_tokens: int = 1000) -> str:
-    resp = client().chat.completions.create(
+    resp = _create_with_retry(
         model=settings.groq_model,
         max_tokens=max_tokens,
         messages=[

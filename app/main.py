@@ -1,10 +1,13 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+import groq
 from sqlalchemy import text
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import Base, engine
 from app.config import settings
-from app.routers import auth, videos, words, review, story, chat, tts, translate, grammar, books, pronounce
+from app import llm_client
+from app.routers import keys, auth, videos, words, review, story, chat, tts, translate, grammar, books, pronounce
 
 Base.metadata.create_all(bind=engine)
 
@@ -32,7 +35,22 @@ def _widen_timestamp_columns():
             print(f"[migrate] skipped ({e.__class__.__name__}): {stmt}")
 
 
+def _add_video_columns():
+    if engine.dialect.name != "postgresql":
+        return
+    for stmt in [
+        "ALTER TABLE videos ADD COLUMN IF NOT EXISTS complete BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE videos ADD COLUMN IF NOT EXISTS transcript TEXT DEFAULT ''",
+    ]:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(stmt))
+        except Exception as e:
+            print(f"[migrate] skipped ({e.__class__.__name__}): {stmt}")
+
+
 _widen_timestamp_columns()
+_add_video_columns()
 
 app = FastAPI(title="Immerse API")
 
@@ -45,6 +63,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(keys.router)
 app.include_router(auth.router)
 app.include_router(videos.router)
 app.include_router(words.router)
@@ -56,6 +75,32 @@ app.include_router(translate.router)
 app.include_router(grammar.router)
 app.include_router(books.router)
 app.include_router(pronounce.router)
+
+
+@app.middleware("http")
+async def groq_key_from_header(request: Request, call_next):
+    llm_client.user_key.set(request.headers.get("x-groq-key", "").strip())
+    return await call_next(request)
+
+
+def _json(status: int, msg: str):
+    # built by hand so CORS headers still get added by the middleware
+    return JSONResponse(status_code=status, content={"detail": msg})
+
+
+@app.exception_handler(llm_client.NoKeyError)
+async def _no_key(request: Request, exc):
+    return _json(400, str(exc))
+
+
+@app.exception_handler(groq.AuthenticationError)
+async def _bad_key(request: Request, exc):
+    return _json(400, "Groq didn't accept that key. Check it in Tools → AI key.")
+
+
+@app.exception_handler(groq.RateLimitError)
+async def _rate(request: Request, exc):
+    return _json(429, "Groq's free limit was reached for now. Wait a minute or two and try again.")
 
 
 @app.get("/health")

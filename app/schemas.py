@@ -48,6 +48,32 @@ class VideoOut(BaseModel):
         from_attributes = True
 
 
+class LinesChunkIn(BaseModel):
+    youtube_id: str
+    source: str = "captions"
+    offset: int = 0            # index of the first raw line in `lines`
+    lines: List[str]           # 1-40 raw Mandarin lines
+    final: bool = False        # true on the last batch
+    full_transcript: Optional[List[str]] = None  # send on offset 0: every raw line
+    ref_en: Optional[List[str]] = None  # creator's English for each line in `lines`, if any
+    summary: Optional[str] = None       # video summary returned by the first batch
+
+
+class LinesChunkOut(BaseModel):
+    video_id: int
+    cached: bool = False
+    summary: str = ""
+    lines: List[LineOut]
+
+
+class TranscriptOut(BaseModel):
+    video_id: int
+    youtube_id: str
+    complete: bool
+    source: str
+    lines: List[str]
+
+
 class MarkLearntIn(BaseModel):
     zh: str
     pinyin: str = ""
