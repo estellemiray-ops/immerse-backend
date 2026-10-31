@@ -98,6 +98,21 @@ async def _bad_key(request: Request, exc):
     return _json(400, "Groq didn't accept that key. Check it in Tools → AI key.")
 
 
+@app.exception_handler(groq.APIStatusError)
+async def _groq_status(request: Request, exc):
+    detail = ""
+    try:
+        detail = (exc.body or {}).get("error", {}).get("message", "") if isinstance(exc.body, dict) else ""
+    except Exception:
+        pass
+    return _json(502, f"Groq answered with an error ({exc.status_code}): {detail or exc.message}")
+
+
+@app.exception_handler(groq.APIConnectionError)
+async def _groq_conn(request: Request, exc):
+    return _json(502, "Couldn't reach Groq from the server. Try again in a moment.")
+
+
 @app.exception_handler(groq.RateLimitError)
 async def _rate(request: Request, exc):
     return _json(429, "Groq's free limit was reached for now. Wait a minute or two and try again.")

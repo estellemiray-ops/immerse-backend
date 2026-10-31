@@ -1,6 +1,8 @@
 import json
+import os
+import tempfile
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
@@ -138,6 +140,32 @@ def _delete_lines(db: Session, video_id: int, from_order: int) -> None:
     db.flush()
 
 
+@router.post("/transcribe")
+async def transcribe_uploaded_audio(
+    audio: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+):
+    """For videos with no usable Chinese captions: the phone downloads the audio itself
+    (YouTube blocks this server) and uploads it here for Groq's Whisper."""
+    data = await audio.read()
+    if len(data) > 24 * 1024 * 1024:
+        raise HTTPException(413, "That audio is over Groq's 25MB free limit — try a shorter video.")
+    if not data:
+        raise HTTPException(400, "The audio file was empty.")
+    suffix = os.path.splitext(audio.filename or "audio.m4a")[1] or ".m4a"
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(data)
+        path = tmp.name
+    try:
+        resp = llm_client.transcribe_audio(path, language="zh")
+    finally:
+        os.remove(path)
+    lines = youtube.lines_from_whisper(resp)
+    if not lines:
+        raise HTTPException(422, "Whisper couldn't hear any speech in that audio.")
+    return {"lines": lines}
+
+
 @router.post("/chunk", response_model=LinesChunkOut)
 def receive_chunk(body: LinesChunkIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """The phone fetches captions itself (YouTube blocks this server) and sends them
@@ -210,6 +238,20 @@ def list_videos(db: Session = Depends(get_db), user: User = Depends(get_current_
         .order_by(Video.created_at.desc())
         .all()
     )
+
+
+@router.get("/by-youtube/{youtube_id}", response_model=VideoOut)
+def get_by_youtube_id(youtube_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Returns the finished video for this YouTube id, so reopening it skips all the work."""
+    video = (
+        db.query(Video)
+        .options(joinedload(Video.lines).joinedload(Line.chunks))
+        .filter(Video.user_id == user.id, Video.youtube_id == youtube_id, Video.complete == True)  # noqa: E712
+        .first()
+    )
+    if not video:
+        raise HTTPException(404, "Not processed yet.")
+    return video
 
 
 @router.get("/{video_id}", response_model=VideoOut)

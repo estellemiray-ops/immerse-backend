@@ -83,6 +83,17 @@ def _download_audio(video_id: str, tmp_dir: str) -> str:
     return os.path.join(tmp_dir, files[0])
 
 
+def lines_from_whisper(resp) -> List[str]:
+    """Turn a Whisper response into subtitle lines (one per segment)."""
+    segments = getattr(resp, "segments", None)
+    if segments:
+        lines = [seg["text"].strip() if isinstance(seg, dict) else seg.text.strip() for seg in segments]
+        return [l for l in lines if l]
+    # fall back to splitting the joined transcript on sentence punctuation
+    text = getattr(resp, "text", "") or ""
+    return [l.strip() for l in re.split(r"[。！？\n]", text) if l.strip()]
+
+
 def transcribe_with_whisper(video_id: str) -> Tuple[List[str], str]:
     """
     Fallback for videos with no creator-uploaded captions: download audio
@@ -103,15 +114,7 @@ def transcribe_with_whisper(video_id: str) -> Tuple[List[str], str]:
             )
 
         resp = llm_client.transcribe_audio(audio_path, language="zh")
-        segments = getattr(resp, "segments", None)
-        if segments:
-            lines = [s["text"].strip() if isinstance(s, dict) else s.text.strip() for s in segments]
-            lines = [l for l in lines if l]
-        else:
-            # fall back to splitting the joined transcript on sentence punctuation
-            text = getattr(resp, "text", "") or ""
-            lines = [l.strip() for l in re.split(r"[。！？\n]", text) if l.strip()]
-        return lines, "whisper"
+        return lines_from_whisper(resp), "whisper"
 
 
 def get_transcript_lines(video_id: str) -> Tuple[List[str], str]:
