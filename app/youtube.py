@@ -3,7 +3,7 @@ import tempfile
 import os
 from typing import List, Tuple
 
-from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
+from youtube_transcript_api import YouTubeTranscriptApi
 
 from app import llm_client
 
@@ -27,19 +27,22 @@ def fetch_captions(video_id: str) -> Tuple[List[str], str]:
     transcript exists, we return nothing here and the caller falls back to
     Whisper, which we trust more than YouTube's auto-captions.
     Returns (list_of_text_lines, source_label) or ([], "") if none exist.
+    Any failure here (blocked IP, no captions, network) just means "no captions":
+    the Whisper fallback gets a turn.
     """
     try:
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-    except (TranscriptsDisabled, Exception):
+        transcript_list = YouTubeTranscriptApi().list(video_id)
+    except Exception:
         return [], ""
 
     candidates = ["zh-Hans", "zh-CN", "zh", "zh-Hant", "zh-TW"]
-
     for code in candidates:
         try:
             t = transcript_list.find_manually_created_transcript([code])
-            data = t.fetch()
-            return [seg["text"].replace("\n", " ").strip() for seg in data if seg["text"].strip()], "youtube_captions"
+            data = t.fetch().to_raw_data()
+            lines = [seg["text"].replace("\n", " ").strip() for seg in data if seg["text"].strip()]
+            if lines:
+                return lines, "youtube_captions"
         except Exception:
             continue
 
@@ -54,10 +57,22 @@ def _download_audio(video_id: str, tmp_dir: str) -> str:
         "format": "bestaudio/best",
         "outtmpl": audio_path,
         "quiet": True,
-        "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "128"}],
+        "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "64"}],
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
+    except Exception as e:
+        msg = str(e)
+        lowered = msg.lower()
+        if "not a bot" in lowered or "sign in to confirm" in lowered:
+            raise RuntimeError(
+                "YouTube is refusing to let this server download the video's audio "
+                "(it blocks many cloud hosts as 'bots'). The video itself is fine."
+            )
+        if "private" in lowered or "unavailable" in lowered:
+            raise RuntimeError("That video is private or unavailable.")
+        raise RuntimeError(f"Could not download this video's audio: {msg[:300]}")
 
     mp3_path = os.path.join(tmp_dir, "audio.mp3")
     if os.path.exists(mp3_path):
