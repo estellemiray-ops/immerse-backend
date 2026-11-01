@@ -60,6 +60,8 @@ def align_batch(raw_lines, before=None, after=None, summary="", ref_en=None, cor
         "Translate ONLY the numbered lines below. Subtitle lines are often fragments of a longer "
         "sentence, so use the surrounding lines to get the meaning right, and translate each chunk "
         "by what it means in this sentence, not as a dictionary entry. "
+        "When a line has an official English subtitle, base the English of its chunks on that subtitle's wording "
+        "(split it across the chunks) instead of inventing your own translation. "
         'For each numbered line return one JSON object with a `chunks` array of '
         '{"zh": "...", "pinyin": "...", "en": "..."} covering the whole line in order, '
         "in natural English that reads smoothly line to line. Return a JSON array, one object per line, same order as input.\n"
@@ -127,14 +129,15 @@ def _align_all(raw_lines, transcript=None, base=0, summary="", ref_en=None, batc
     return out
 
 
-def _store_aligned(db: Session, video: Video, aligned: list[dict], start_order: int) -> list[Line]:
+def _store_aligned(db: Session, video: Video, aligned: list[dict], start_order: int, starts=None) -> list[Line]:
     """Save aligned lines; order_index is the raw line's position in the whole transcript."""
     saved = []
     for i, line_data in enumerate(aligned):
         chunks = (line_data or {}).get("chunks") or []
         if not chunks:
             continue
-        line = Line(video_id=video.id, order_index=start_order + i)
+        ms = starts[i] if starts and i < len(starts) and starts[i] and starts[i] > 0 else 0
+        line = Line(video_id=video.id, order_index=start_order + i, start_ms=ms)
         db.add(line)
         db.flush()
         for c_idx, c in enumerate(chunks):
@@ -254,7 +257,7 @@ def receive_chunk(body: LinesChunkIn, db: Session = Depends(get_db), user: User 
     if body.offset == 0 and not summary:
         summary = summarize_video(transcript or body.lines)
     aligned = _align_all(body.lines, transcript or None, body.offset, summary, body.ref_en, correct=body.source in CORRECT_SOURCES)
-    saved = _store_aligned(db, video, aligned, body.offset)
+    saved = _store_aligned(db, video, aligned, body.offset, body.starts)
     if body.final:
         video.complete = True
     db.commit()

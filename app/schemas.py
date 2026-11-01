@@ -32,6 +32,7 @@ class ChunkOut(BaseModel):
 
 class LineOut(BaseModel):
     chunks: List[ChunkOut]
+    start_ms: int = 0  # when the line first appears in the video (0 = unknown)
 
     class Config:
         from_attributes = True
@@ -55,6 +56,7 @@ class LinesChunkIn(BaseModel):
     lines: List[str]           # 1-40 raw Mandarin lines
     final: bool = False        # true on the last batch
     full_transcript: Optional[List[str]] = None  # send on offset 0: every raw line
+    starts: Optional[List[int]] = None  # start time in ms for each line in `lines`
     ref_en: Optional[List[str]] = None  # creator's English for each line in `lines`, if any
     summary: Optional[str] = None       # video summary returned by the first batch
 
