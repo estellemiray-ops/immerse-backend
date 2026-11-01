@@ -2,7 +2,7 @@ import json
 import re
 import time
 from contextvars import ContextVar
-from groq import Groq, RateLimitError
+from groq import Groq, RateLimitError, NotFoundError, BadRequestError
 from app.config import settings
 
 _client = None
@@ -27,32 +27,66 @@ def client() -> Groq:
     return _client
 
 
-def _create_with_retry(**kwargs):
-    """Groq's free tier answers 429 when asked too fast; wait and try again."""
-    for attempt in range(4):
-        try:
-            return client().chat.completions.create(**kwargs)
-        except RateLimitError:
-            if attempt == 3:
+_working_model = ""  # remembered once a model has answered, so we don't re-probe every call
+
+
+def _model_chain() -> list[str]:
+    chain = [m.strip() for m in [settings.groq_model] + settings.groq_fallback_models.split(",") if m.strip()]
+    if _working_model and _working_model in chain:
+        chain.remove(_working_model)
+        chain.insert(0, _working_model)
+    return chain
+
+
+def _extra_for(model: str) -> dict:
+    # "no reasoning" means different things per model family
+    if model.startswith("openai/gpt-oss"):
+        return {"reasoning_effort": "low"}
+    return {"reasoning_effort": "none"}
+
+
+def _create_with_retry(messages, max_tokens):
+    """Calls Groq, waiting out free-tier rate limits (429) and moving to the next model if
+    Groq has retired the current one (404)."""
+    global _working_model
+    last_missing = None
+    for model in _model_chain():
+        extra = _extra_for(model)
+        tokens = max_tokens + (1200 if model.startswith("openai/gpt-oss") else 0)  # reasoning counts as output
+        for attempt in range(4):
+            try:
+                resp = client().chat.completions.create(
+                    model=model, max_tokens=tokens, messages=messages, extra_body=extra
+                )
+                _working_model = model
+                return resp
+            except RateLimitError:
+                if attempt == 3:
+                    raise
+                time.sleep(min(8 * (attempt + 1), 25))
+            except BadRequestError as e:
+                # a model that doesn't accept our reasoning setting: retry once without it
+                if extra and "reasoning" in str(e).lower():
+                    extra = {}
+                    continue
                 raise
-            time.sleep(min(8 * (attempt + 1), 25))
+            except NotFoundError as e:
+                last_missing = e
+                break  # this model is gone; try the next one
+    if last_missing:
+        raise last_missing
+    raise RuntimeError("No Groq model is configured.")
+
+
+_THINK = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
 def call(system: str, user: str, max_tokens: int = 1000) -> str:
     resp = _create_with_retry(
-        model=settings.groq_model,
-        max_tokens=max_tokens,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        # qwen3 on Groq is a reasoning model; turning reasoning off keeps the
-        # reply itself clean (no hidden chain-of-thought) and faster/cheaper.
-        # If Groq renames/removes this param for the pinned model, this is
-        # silently ignored by extra_body rather than erroring.
-        extra_body={"reasoning_effort": "none"},
+        [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        max_tokens,
     )
-    return resp.choices[0].message.content or ""
+    return _THINK.sub("", resp.choices[0].message.content or "").strip()
 
 
 def call_json(system: str, user: str, max_tokens: int = 1000):
