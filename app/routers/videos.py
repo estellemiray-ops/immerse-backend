@@ -24,6 +24,8 @@ ALIGN_SYSTEM = (
 
 
 CONTEXT_LINES = 4
+# sources whose Mandarin text is machine-made and worth correcting
+CORRECT_SOURCES = {"whisper", "ocr", "auto-captions"}
 
 
 def summarize_video(transcript: list[str]) -> str:
@@ -40,12 +42,20 @@ def summarize_video(transcript: list[str]) -> str:
         return ""
 
 
-def align_batch(raw_lines, before=None, after=None, summary="", ref_en=None) -> list[dict]:
+def align_batch(raw_lines, before=None, after=None, summary="", ref_en=None, correct=False) -> list[dict]:
     parts = []
     if summary:
         parts.append(f"About the whole video: {summary}\n")
     if before:
         parts.append("Context only (lines just BEFORE; do not translate):\n" + "\n".join(before) + "\n")
+    if correct:
+        parts.append(
+            "These Mandarin lines were produced automatically (speech recognition or reading burned-in "
+            "subtitles) and may contain mistakes: wrong characters that sound or look alike, wrong words, "
+            "broken sentences. Where the surrounding lines or the official English subtitle make the right "
+            "wording clear, silently correct the Mandarin in your `zh` output. Only fix clear errors; never "
+            "add words nobody said, and leave correct text exactly as it is.\n"
+        )
     parts.append(
         "Translate ONLY the numbered lines below. Subtitle lines are often fragments of a longer "
         "sentence, so use the surrounding lines to get the meaning right, and translate each chunk "
@@ -101,7 +111,7 @@ def process_video(body: ProcessVideoIn, db: Session = Depends(get_db), user: Use
     return video
 
 
-def _align_all(raw_lines, transcript=None, base=0, summary="", ref_en=None, batch_size=5) -> list[dict]:
+def _align_all(raw_lines, transcript=None, base=0, summary="", ref_en=None, batch_size=5, correct=False) -> list[dict]:
     """transcript = the whole video's lines (for context); base = where raw_lines starts in it."""
     transcript = transcript or raw_lines
     out: list[dict] = []
@@ -111,7 +121,7 @@ def _align_all(raw_lines, transcript=None, base=0, summary="", ref_en=None, batc
         before = transcript[max(0, g - CONTEXT_LINES) : g]
         after = transcript[g + len(batch) : g + len(batch) + CONTEXT_LINES]
         refs = ref_en[i : i + batch_size] if ref_en else None
-        aligned = align_batch(batch, before, after, summary, refs)
+        aligned = align_batch(batch, before, after, summary, refs, correct)
         aligned = (aligned + [{}] * len(batch))[: len(batch)]
         out.extend(aligned)
     return out
@@ -148,7 +158,7 @@ class AudioB64In(BaseModel):
     ext: str = "webm"
 
 
-def _whisper_bytes(data: bytes, suffix: str) -> list[str]:
+def _whisper_bytes(data: bytes, suffix: str):
     if not data:
         raise HTTPException(400, "The audio file was empty.")
     if len(data) > 24 * 1024 * 1024:
@@ -160,7 +170,7 @@ def _whisper_bytes(data: bytes, suffix: str) -> list[str]:
         resp = llm_client.transcribe_audio(path, language="zh")
     finally:
         os.remove(path)
-    return youtube.lines_from_whisper(resp)
+    return resp
 
 
 @router.post("/transcribe-b64")
@@ -172,7 +182,8 @@ def transcribe_b64(body: AudioB64In, user: User = Depends(get_current_user)):
     except (binascii.Error, ValueError):
         raise HTTPException(400, "That audio wasn't valid.")
     ext = "".join(ch for ch in body.ext if ch.isalnum())[:5] or "webm"
-    return {"lines": _whisper_bytes(data, "." + ext)}
+    resp = _whisper_bytes(data, "." + ext)
+    return {"lines": youtube.lines_from_whisper(resp), "segments": youtube.segments_from_whisper(resp)}
 
 
 @router.post("/transcribe")
@@ -242,7 +253,7 @@ def receive_chunk(body: LinesChunkIn, db: Session = Depends(get_db), user: User 
     summary = body.summary or ""
     if body.offset == 0 and not summary:
         summary = summarize_video(transcript or body.lines)
-    aligned = _align_all(body.lines, transcript or None, body.offset, summary, body.ref_en)
+    aligned = _align_all(body.lines, transcript or None, body.offset, summary, body.ref_en, correct=body.source in CORRECT_SOURCES)
     saved = _store_aligned(db, video, aligned, body.offset)
     if body.final:
         video.complete = True

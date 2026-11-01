@@ -94,6 +94,20 @@ def lines_from_whisper(resp) -> List[str]:
     return [l.strip() for l in re.split(r"[。！？\n]", text) if l.strip()]
 
 
+def segments_from_whisper(resp) -> list:
+    """Like lines_from_whisper but keeps each segment's start time (seconds into the audio)."""
+    out = []
+    for seg in getattr(resp, "segments", None) or []:
+        if isinstance(seg, dict):
+            text, start = seg.get("text", ""), seg.get("start", 0)
+        else:
+            text, start = getattr(seg, "text", ""), getattr(seg, "start", 0)
+        text = (text or "").strip()
+        if text:
+            out.append({"start": float(start or 0), "text": text})
+    return out
+
+
 def transcribe_with_whisper(video_id: str) -> Tuple[List[str], str]:
     """
     Fallback for videos with no creator-uploaded captions: download audio
