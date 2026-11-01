@@ -1,8 +1,11 @@
+import base64
+import binascii
 import json
 import os
 import tempfile
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
@@ -138,6 +141,38 @@ def _delete_lines(db: Session, video_id: int, from_order: int) -> None:
         db.query(Chunk).filter(Chunk.line_id.in_(ids)).delete(synchronize_session=False)
         db.query(Line).filter(Line.id.in_(ids)).delete(synchronize_session=False)
     db.flush()
+
+
+class AudioB64In(BaseModel):
+    audio_b64: str
+    ext: str = "webm"
+
+
+def _whisper_bytes(data: bytes, suffix: str) -> list[str]:
+    if not data:
+        raise HTTPException(400, "The audio file was empty.")
+    if len(data) > 24 * 1024 * 1024:
+        raise HTTPException(413, "That audio is over Groq's 25MB free limit.")
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(data)
+        path = tmp.name
+    try:
+        resp = llm_client.transcribe_audio(path, language="zh")
+    finally:
+        os.remove(path)
+    return youtube.lines_from_whisper(resp)
+
+
+@router.post("/transcribe-b64")
+def transcribe_b64(body: AudioB64In, user: User = Depends(get_current_user)):
+    """Audio pieces recorded by the in-app player arrive as base64 text. A piece with no
+    speech (music, silence) simply returns no lines."""
+    try:
+        data = base64.b64decode(body.audio_b64, validate=False)
+    except (binascii.Error, ValueError):
+        raise HTTPException(400, "That audio wasn't valid.")
+    ext = "".join(ch for ch in body.ext if ch.isalnum())[:5] or "webm"
+    return {"lines": _whisper_bytes(data, "." + ext)}
 
 
 @router.post("/transcribe")
