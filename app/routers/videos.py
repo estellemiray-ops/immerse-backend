@@ -300,6 +300,18 @@ def get_by_youtube_id(youtube_id: str, db: Session = Depends(get_db), user: User
     return video
 
 
+@router.delete("/by-youtube/{youtube_id}")
+def delete_by_youtube_id(youtube_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Throws away this person's saved subtitles for a video so they can be made again."""
+    video = db.query(Video).filter(Video.user_id == user.id, Video.youtube_id == youtube_id).first()
+    if not video:
+        return {"deleted": False}
+    _delete_lines(db, video.id, 0)
+    db.delete(video)
+    db.commit()
+    return {"deleted": True}
+
+
 @router.get("/{video_id}", response_model=VideoOut)
 def get_video(video_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     video = (
