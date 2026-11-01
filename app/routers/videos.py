@@ -62,9 +62,10 @@ def align_batch(raw_lines, before=None, after=None, summary="", ref_en=None, cor
         "by what it means in this sentence, not as a dictionary entry. "
         "When a line has an official English subtitle, base the English of its chunks on that subtitle's wording "
         "(split it across the chunks) instead of inventing your own translation. "
-        'For each numbered line return one JSON object with a `chunks` array of '
+        'For each numbered line return one JSON object with `n` (the line number given below) and a `chunks` array of '
         '{"zh": "...", "pinyin": "...", "en": "..."} covering the whole line in order, '
-        "in natural English that reads smoothly line to line. Return a JSON array, one object per line, same order as input.\n"
+        "in natural English that reads smoothly line to line. Return a JSON array, one object per line, same order as input, "
+        "each carrying its own `n`.\n"
     )
     lines_txt = []
     for i, l in enumerate(raw_lines):
@@ -113,6 +114,22 @@ def process_video(body: ProcessVideoIn, db: Session = Depends(get_db), user: Use
     return video
 
 
+def _by_number(aligned: list, count: int) -> list:
+    """Put the model's answers back under the right input line. Matching by the line number it
+    echoes means a skipped, merged or reordered answer can't shift every later line (and its time)."""
+    mapped: dict = {}
+    for item in aligned:
+        n = item.get("n") if isinstance(item, dict) else None
+        if isinstance(n, int) and 1 <= n <= count and (n - 1) not in mapped:
+            mapped[n - 1] = item
+        else:
+            mapped = {}
+            break
+    if mapped:
+        return [mapped.get(i, {}) for i in range(count)]
+    return (aligned + [{}] * count)[:count]  # model gave no usable numbers: fall back to position
+
+
 def _align_all(raw_lines, transcript=None, base=0, summary="", ref_en=None, batch_size=5, correct=False) -> list[dict]:
     """transcript = the whole video's lines (for context); base = where raw_lines starts in it."""
     transcript = transcript or raw_lines
@@ -124,8 +141,7 @@ def _align_all(raw_lines, transcript=None, base=0, summary="", ref_en=None, batc
         after = transcript[g + len(batch) : g + len(batch) + CONTEXT_LINES]
         refs = ref_en[i : i + batch_size] if ref_en else None
         aligned = align_batch(batch, before, after, summary, refs, correct)
-        aligned = (aligned + [{}] * len(batch))[: len(batch)]
-        out.extend(aligned)
+        out.extend(_by_number(aligned, len(batch)))
     return out
 
 
